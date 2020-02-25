@@ -1,8 +1,8 @@
 #
-# Cookbook Name:: windows_dhcp
+# Cookbook:: windows_dhcp
 # Resource:: lease
 #
-# Copyright 2014, Texas A&M
+# Copyright:: 2014, Texas A&M
 #
 # Permission is hereby granted, free of charge, to any person obtaining
 # a copy of this software and associated documentation files (the
@@ -24,17 +24,14 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #
 
-actions :create, :delete
-default_action :create
-
-attribute :name, :kind_of => String, :name_attribute => true
-attribute :ipaddress, :kind_of => String, :regex => (Resolv::IPv4::Regex or Resolv::IPv6::Regex), :required => true
-attribute :scopeid, :kind_of => String, :regex => (Resolv::IPv4::Regex or Resolv::IPv6::Regex), :required => true
-attribute :macaddress, :kind_of => String, :required => true
-attribute :leaseexpirytime, :kind_of => String #Regex for YYYY-MM-DD HH:MM:SS?
-attribute :description, :kind_of => String
-attribute :version, :kind_of => String, :default => '4'
-attribute :computername, :kind_of => String
+property :lease_name, String, name_property: true
+property :ipaddress, String, regex: (Resolv::IPv4::Regex || Resolv::IPv6::Regex), required: true
+property :scopeid, String, regex: (Resolv::IPv4::Regex || Resolv::IPv6::Regex), required: true
+property :macaddress, String, required: true
+property :leaseexpirytime, String # Regex for YYYY-MM-DD HH:MM:SS?
+property :description, String
+property :version, String, default: '4'
+property :computername, String
 
 #  Optional params shared
 #    AsJob
@@ -60,3 +57,60 @@ attribute :computername, :kind_of => String
 #    ClientDuid: string
 #    iaid: int32
 
+action :create do
+  if exists?
+    Chef::Log.debug("The lease #{new_resource.lease_name} already exists")
+  else
+    converge_by "create lease #{new_resource.lease_name}" do
+      if new_resource.version == '6'
+        cmd = 'Add-DhcpServerv6Lease'
+      end
+      if new_resource.version == '4'
+        cmd = 'Add-DhcpServerv4Lease'
+      end
+
+      # Allow use of : in macmacaddress
+      hwaddress = new_resource.macaddress.gsub(':', '-')
+      cmd << " -IPAddress #{new_resource.ipaddress}"
+      cmd << " -scopeid #{new_resource.scopeid}"
+      cmd << " -clientid #{hwaddress}"
+      #      cmd << " -leaseexpirytime #{new_resource.leaseexpirytime}"
+      #      cmd << " -description #{new_resource.description}"
+      # Optional hash needed
+
+      powershell_out!(cmd).run_command
+    end
+  end
+end
+
+action :delete do
+  if exists?
+    converge_by("delete lease #{new_resource.lease_name}") do
+      if new_resource.version == '6'
+        cmd = 'Remove-DhcpServerv6lease'
+      end
+      if new_resource.version == '4'
+        cmd = 'Remove-DhcpServerv4lease'
+      end
+      #    cmd << " -scopeid #{new_resource.scopeid}"
+      cmd << " -IPAddress #{new_resource.ipaddress}"
+
+      powershell_out!(cmd).run_command
+    end
+  else
+    Chef::Log.debug("The lease #{new_resource.lease_name} was not found")
+  end
+end
+
+action_class do
+  def exists?
+    if new_resource.version == '6'
+      check = powershell_out("Get-DhcpServerv6Lease -ipaddress #{new_resource.ipaddress}").run_command
+      check.stdout.include?(new_resource.ipaddress)
+    end
+    if new_resource.version == '4'
+      check = powershell_out("Get-DhcpServerv4Lease -ipaddress #{new_resource.ipaddress}").run_command
+      check.stdout.include?(new_resource.ipaddress)
+    end
+  end
+end
